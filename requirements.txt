@@ -1,0 +1,13 @@
+# NOTE: use Python 3.11 or 3.12. Very new Python versions (e.g. 3.13/3.14)
+# often lack prebuilt wheels for chromadb/ragas dependencies, forcing pip
+# to compile from source (requires a C++ compiler on Windows).
+streamlit>=1.38
+python-dotenv>=1.0
+openai>=1.40
+chromadb>=0.5
+python-docx>=1.1
+langchain-text-splitters>=0.2
+langchain-openai>=0.1.20
+ragas==0.1.21
+datasets>=2.20
+pandas>=2.2
