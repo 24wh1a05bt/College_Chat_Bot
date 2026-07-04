@@ -12,13 +12,10 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DOCX_PATH = Path(os.getenv("DOCX_PATH", DATA_DIR / "college_website.docx"))
+IMAGES_DIR = Path(os.getenv("IMAGES_DIR", DATA_DIR / "images"))
 PERSIST_DIR = str(BASE_DIR / os.getenv("CHROMA_DIR", "chroma_db"))
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "college_faq")
 EVAL_DIR = BASE_DIR / "eval_results"
-
-# Images embedded in the source .docx are extracted here at ingest time and
-# served straight from disk by the Streamlit app - no re-embedding needed.
-IMAGES_DIR = BASE_DIR / os.getenv("IMAGES_DIR", "assets/images")
 
 # --- OpenRouter ----------------------------------------------------------
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")

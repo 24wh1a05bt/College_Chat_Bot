@@ -9,6 +9,7 @@ answer()     -> builds the grounding prompt, calls the generation LLM,
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -48,11 +49,36 @@ present both values, cite each separately, and explicitly note the
 discrepancy (e.g. "Two sections of the source document give different
 figures here: ... This should be verified with the college.").
 
+IMAGE HANDLING
+Some context chunks have images attached (photos, logos, campus pictures).
+You never see the image bytes yourself and you never receive a filename in
+the context - so never invent or print anything that looks like a filename
+(e.g. "image-003.png"). If the user asks to see a photo/picture/image and
+one is available for the relevant section, simply say something like "Here
+is the photo from that section" and let the interface display it - do not
+describe pixel content you have not actually seen. If none is available,
+say so plainly instead of guessing.
+
 STYLE
 Be concise, factual, and neutral. Do not make promises about individual
 outcomes (admission chances, placement guarantees, scholarship eligibility).
 Do not give medical, legal, or financial advice.
 """.format(fallback_contact=config.FALLBACK_CONTACT)
+
+# Keywords used to detect an explicit request to *see* an image, rather than
+# just a question that happens to mention a photo-worthy topic (e.g. "campus
+# facilities" alone shouldn't trigger an image; "show me a photo of the
+# campus" should).
+_IMAGE_INTENT_RE = re.compile(
+    r"\b(show|see|view|display)\b.{0,25}\b(image|photo|picture|pic|logo|snapshot)s?\b"
+    r"|\b(image|photo|picture|pic|logo)s?\b.{0,25}\b(of|for)\b",
+    re.IGNORECASE,
+)
+
+
+def wants_image(query: str) -> bool:
+    """True only when the user explicitly asked to see an image."""
+    return bool(_IMAGE_INTENT_RE.search(query))
 
 
 @dataclass
@@ -62,7 +88,7 @@ class RetrievedChunk:
     page: int
     source: str
     distance: float
-    images: list[str] = field(default_factory=list)  # filenames under config.IMAGES_DIR
+    images: list[dict] = field(default_factory=list)  # [{"filename","caption"}]
 
 
 @dataclass
@@ -71,7 +97,7 @@ class RAGResponse:
     chunks: list[RetrievedChunk] = field(default_factory=list)
     latency_seconds: float = 0.0
     refused: bool = False
-    images: list[str] = field(default_factory=list)  # deduped, in retrieval order
+    images: list[dict] = field(default_factory=list)  # only populated if explicitly requested
 
 
 def retrieve(query: str, top_k: int = None, section_filter: str | None = None) -> list[RetrievedChunk]:
@@ -93,10 +119,27 @@ def retrieve(query: str, top_k: int = None, section_filter: str | None = None) -
     metas = results.get("metadatas", [[]])[0]
     dists = results.get("distances", [[]])[0]
     for doc, meta, dist in zip(docs, metas, dists):
-        try:
-            images = json.loads(meta.get("images") or "[]")
-        except (json.JSONDecodeError, TypeError):
-            images = []
+        raw_images = meta.get("images", "") or ""
+        images = []
+        if raw_images:
+            try:
+                parsed = json.loads(raw_images)
+            except json.JSONDecodeError:
+                parsed = []
+            # Normalize whatever shape ended up in metadata (a stale/rebuilt
+            # index could have a single dict, a bare filename string, or a
+            # proper list of dicts) into a consistent list[dict].
+            if isinstance(parsed, dict):
+                parsed = [parsed]
+            elif isinstance(parsed, str):
+                parsed = [{"filename": parsed, "caption": ""}]
+            elif not isinstance(parsed, list):
+                parsed = []
+            for entry in parsed:
+                if isinstance(entry, dict) and entry.get("filename"):
+                    images.append({"filename": entry["filename"], "caption": entry.get("caption", "")})
+                elif isinstance(entry, str) and entry:
+                    images.append({"filename": entry, "caption": ""})
         chunks.append(
             RetrievedChunk(
                 text=doc,
@@ -108,18 +151,6 @@ def retrieve(query: str, top_k: int = None, section_filter: str | None = None) -
             )
         )
     return chunks
-
-
-def _collect_images(chunks: list[RetrievedChunk]) -> list[str]:
-    """Dedupe images across all retrieved chunks, preserving first-seen order."""
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for c in chunks:
-        for img in c.images:
-            if img not in seen:
-                seen.add(img)
-                ordered.append(img)
-    return ordered
 
 
 def _format_context(chunks: list[RetrievedChunk]) -> str:
@@ -136,32 +167,7 @@ def answer(
     section_filter: str | None = None,
 ) -> RAGResponse:
     start = time.time()
-
-    # Robustness guard: empty/whitespace-only input has no meaningful
-    # embedding, and some OpenRouter-backed embedding models return zero
-    # vectors for it, which raises inside the OpenAI SDK ("No embedding
-    # data received"). Handle it before ever calling retrieve().
-    cleaned_query = (query or "").strip()
-    if not cleaned_query:
-        return RAGResponse(
-            answer=(
-                "It looks like your message was empty. Please type a "
-                "question about BVRIT (e.g. admissions, fees, placements) "
-                "and I'll do my best to help."
-            ),
-            chunks=[],
-            latency_seconds=time.time() - start,
-            refused=True,
-            images=[],
-        )
-
-    # Guard against pathologically long input blowing past the embedding
-    # model's token limit (e.g. an accidental paste of an entire document).
-    MAX_QUERY_CHARS = 4000
-    if len(cleaned_query) > MAX_QUERY_CHARS:
-        cleaned_query = cleaned_query[:MAX_QUERY_CHARS]
-
-    chunks = retrieve(cleaned_query, top_k=top_k, section_filter=section_filter)
+    chunks = retrieve(query, top_k=top_k, section_filter=section_filter)
 
     if not chunks:
         latency = time.time() - start
@@ -183,7 +189,7 @@ def answer(
     messages.append(
         {
             "role": "user",
-            "content": f"CONTEXT:\n{context}\n\nQUESTION: {cleaned_query}",
+            "content": f"CONTEXT:\n{context}\n\nQUESTION: {query}",
         }
     )
 
@@ -191,6 +197,22 @@ def answer(
     latency = time.time() - start
 
     refused = "don't have that information" in text.lower() or "contact " in text.lower()[:200] and "i don't have" in text.lower()
-    images = [] if refused else _collect_images(chunks)
+
+    images: list[dict] = []
+    if wants_image(query) and not refused:
+        seen = set()
+        for c in chunks:
+            for img in c.images:
+                if img["filename"] in seen:
+                    continue
+                seen.add(img["filename"])
+                images.append(
+                    {
+                        "filename": img["filename"],
+                        "caption": img.get("caption", ""),
+                        "section": c.section,
+                        "path": str(config.IMAGES_DIR / img["filename"]),
+                    }
+                )
 
     return RAGResponse(answer=text, chunks=chunks, latency_seconds=latency, refused=refused, images=images)
