@@ -80,7 +80,7 @@ def generate_test_cases() -> list[dict]:
         },
     ]
 
-    raw = chat_completion(
+    raw, _ = chat_completion(
         messages,
         model=config.TEST_GEN_MODEL,
         temperature=0.3,

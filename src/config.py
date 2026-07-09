@@ -37,11 +37,22 @@ OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "College FAQ Chatbot")
 # Section-aware splitting: the document has clear H1/H2 headings, so we first
 # split by heading, then run a RecursiveCharacterTextSplitter *within* each
 # section so a chunk never straddles two unrelated sections.
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))      # characters
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))  # characters
+# Balanced approach: 600 chars gives enough room to include sub-heading names
+# within a section overview chunk, while still keeping chunks focused.
+# Overlap of 75 chars ensures boundary sentences are preserved.
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "600"))      # characters
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "75"))  # characters
 
 # --- Retrieval -------------------------------------------------------------
-TOP_K = int(os.getenv("TOP_K", "5"))
+# Increased from 5 to 7 to improve Context Recall (more chance of retrieving
+# the exact chunk needed, especially for multi-fact questions).
+TOP_K = int(os.getenv("TOP_K", "10"))
+
+# --- Memory settings -------------------------------------------------------
+MEMORY_MAX_TURNS = int(os.getenv("MEMORY_MAX_TURNS", "20"))
+MEMORY_SUMMARIZE_AFTER = int(os.getenv("MEMORY_SUMMARIZE_AFTER", "10"))
+MEMORY_PROFILE_DB = os.getenv("MEMORY_PROFILE_DB", "user_profiles.db")
+MEMORY_AUTO_EXPIRE_DAYS = int(os.getenv("MEMORY_AUTO_EXPIRE_DAYS", "30"))
 
 # --- Evaluation ------------------------------------------------------------
 PERFORMANCE_SLA_SECONDS = float(os.getenv("PERFORMANCE_SLA_SECONDS", "10"))

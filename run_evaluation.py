@@ -36,7 +36,7 @@ def main():
 
     print("\n=== Dimension 08: RAGAS scoring ===")
     try:
-        from ragas_eval import run_ragas_eval
+        from src.ragas_eval import run_ragas_eval
         run_ragas_eval()
     except ImportError:
         print("ragas/datasets not installed — skipping RAGAS scoring "

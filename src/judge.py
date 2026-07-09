@@ -67,7 +67,7 @@ def _judge_llm_dimension(case: dict) -> dict:
         },
     ]
 
-    raw = chat_completion(messages, model=config.JUDGE_MODEL, temperature=0.0, max_tokens=400)
+    raw, _ = chat_completion(messages, model=config.JUDGE_MODEL, temperature=0.0, max_tokens=400)
     raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         verdict = json.loads(raw)

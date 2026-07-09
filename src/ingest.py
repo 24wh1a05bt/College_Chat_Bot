@@ -42,31 +42,90 @@ class Section:
         return "\n".join(p for p in self.paragraphs if p.strip())
 
 
+def _table_to_text(table) -> str:
+    """Convert a docx table into a text representation with rows and columns."""
+    rows = []
+    for row in table.rows:
+        cells = [cell.text.strip() for cell in row.cells]
+        rows.append(" | ".join(cells))
+    return "\n".join(rows)
+
+
+def _find_tables_for_section(doc: DocxDocument, section_start_idx: int, section_end_idx: int) -> list[str]:
+    """Find tables that appear between paragraph indices section_start_idx and section_end_idx.
+    
+    Tables in python-docx are stored separately from paragraphs, but we can
+    determine which section a table belongs to by checking which paragraph
+    it appears near. We iterate through the document's body XML elements in
+    order to find tables that fall within the section's paragraph range.
+    """
+    tables_text = []
+    # Get the body element
+    body = doc.element.body
+    # Track paragraph index as we walk XML elements
+    para_idx = 0
+    table_idx = 0
+    for child in body:
+        tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+        if tag == 'p':
+            # It's a paragraph
+            if section_start_idx <= para_idx < section_end_idx:
+                pass  # within section
+            para_idx += 1
+        elif tag == 'tbl':
+            # It's a table - check if it falls within our section range
+            if section_start_idx <= para_idx <= section_end_idx + 1:
+                if table_idx < len(doc.tables):
+                    table_text = _table_to_text(doc.tables[table_idx])
+                    if table_text.strip():
+                        tables_text.append(table_text)
+            table_idx += 1
+    return tables_text
+
+
 def parse_sections(doc: DocxDocument) -> list[Section]:
-    """Walk the document and group paragraphs under their nearest heading."""
+    """Walk the document and group paragraphs under their nearest heading.
+    Also extracts table content that falls within each section."""
     sections: list[Section] = []
     current = Section(heading="Preamble", level=0)
+    # Track paragraph indices for table-to-section mapping
+    para_indices: list[tuple[int, int]] = []  # (start_idx, end_idx) per section
 
+    current_start_idx = 0
+    para_idx = 0
     for para in doc.paragraphs:
         style_name = (para.style.name or "").lower()
         text = para.text.strip()
         if not text:
+            para_idx += 1
             continue
 
         if style_name.startswith("heading") or style_name in ("title",):
             # Start a new section on every heading paragraph.
             if current.text:
                 sections.append(current)
+                para_indices.append((current_start_idx, para_idx))
             level = 1
             if style_name.startswith("heading"):
                 digits = "".join(ch for ch in style_name if ch.isdigit())
                 level = int(digits) if digits else 1
             current = Section(heading=text, level=level)
+            current_start_idx = para_idx
         else:
             current.paragraphs.append(text)
+        para_idx += 1
 
     if current.text:
         sections.append(current)
+        para_indices.append((current_start_idx, para_idx))
+
+    # Now extract tables for each section and append them as text
+    for i, section in enumerate(sections):
+        if i < len(para_indices):
+            start_idx, end_idx = para_indices[i]
+            table_texts = _find_tables_for_section(doc, start_idx, end_idx)
+            for tt in table_texts:
+                section.paragraphs.append(f"\n[Table Data]\n{tt}")
 
     # Drop an empty leading "Preamble" section if nothing landed in it.
     return [s for s in sections if s.text.strip()]

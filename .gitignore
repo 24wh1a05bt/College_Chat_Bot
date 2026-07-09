@@ -1,9 +1,13 @@
+# =========================
 # Secrets
+# =========================
 .env
 .env.*
 !.env.example
 
+# =========================
 # Python
+# =========================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -12,34 +16,43 @@ __pycache__/
 .Python
 build/
 dist/
-data/images/
+
 # Virtual environments
 venv/
 .venv/
 env/
 ENV/
 
-# Vector store / generated indexes
+# =========================
+# Generated data
+# =========================
+data/images/
 chroma_db/
 *.sqlite3
+user_profiles.db
 
-# Images extracted from the source .docx at ingest time
+# Images extracted from the source .docx
 assets/images/*
 !assets/images/.gitkeep
 
-# Evaluation artifacts (regenerate via run_evaluation.py)
+# Evaluation artifacts
 eval_results/*.json
 eval_results/*.md
 
+# =========================
 # Streamlit
+# =========================
 .streamlit/secrets.toml
 
-# OS / editor
-.DS_Store
-.idea/
+# =========================
+# Editors / OS
+# =========================
 .vscode/
+.idea/
+.DS_Store
 *.swp
 
+# =========================
 # Jupyter
+# =========================
 .ipynb_checkpoints/
-

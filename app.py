@@ -6,12 +6,15 @@ Run with:
 """
 import html
 import os
+import hashlib
+import time
 
 import streamlit as st
 
 from src import config
 from src.ingest import build_index, get_collection, list_sections
-from src.rag_chain import answer
+from src.rag_chain import answer, get_privacy_notice
+from src.memory import reset_session
 
 st.set_page_config(
     page_title="BVRIT FAQ Assistant",
@@ -23,6 +26,16 @@ st.set_page_config(
 # --- Session state ---------------------------------------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []  # [{role, content, citations, refused, latency}]
+
+if "first_interaction" not in st.session_state:
+    st.session_state.first_interaction = True
+
+if "user_id" not in st.session_state:
+    # Generate a persistent user ID based on session
+    st.session_state.user_id = f"user_{hashlib.md5(str(time.time()).encode()).hexdigest()[:8]}"
+
+if "session_id" not in st.session_state:
+    st.session_state.session_id = f"session_{time.strftime('%Y%m%d_%H%M%S')}"
 
 
 # --- Design system ----------------------------------------------------------
@@ -173,6 +186,127 @@ def _inject_css() -> None:
             margin-top:28px; padding-top:14px; border-top:1px solid var(--border);
             color:var(--ink-500); font-size:0.8rem; text-align:center;
         }
+        
+        /* Memory status indicator */
+        .memory-indicator {
+            display:inline-flex; align-items:center; gap:6px;
+            padding:4px 12px; border-radius:999px; font-size:0.72rem;
+            background:rgba(255,255,255,0.08); color:#AFC0D9;
+            border:1px solid rgba(255,255,255,0.10);
+        }
+        .memory-indicator .dot {
+            width:6px; height:6px; border-radius:50%; display:inline-block;
+        }
+        .dot-active { background:#4CAF50; }
+        .dot-inactive { background:#9e9e9e; }
+
+        /* ---- Real chatbot look: bubbles, avatars, floating input ---- */
+
+        /* Base bubble */
+        div[data-testid="stChatMessage"]{
+            border:none;
+            border-radius:18px;
+            padding:12px 16px;
+            margin-bottom:12px;
+            max-width:82%;
+            box-shadow:0 1px 3px rgba(16,24,40,0.06);
+            animation: bubble-in .18s ease-out;
+        }
+        @keyframes bubble-in{
+            from{ opacity:0; transform:translateY(4px); }
+            to{ opacity:1; transform:translateY(0); }
+        }
+
+        /* Assistant bubble: left-aligned, paper card */
+        div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]){
+            background:#FFFFFF;
+            border:1px solid var(--border);
+            margin-right:auto;
+            border-bottom-left-radius:4px;
+        }
+
+        /* User bubble: right-aligned, filled navy, reversed avatar order */
+        div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]){
+            background:linear-gradient(135deg,var(--navy-700) 0%,var(--navy-900) 100%);
+            margin-left:auto;
+            flex-direction:row-reverse;
+            border-bottom-right-radius:4px;
+        }
+        div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) p,
+        div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) span,
+        div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdown{
+            color:#FFFFFF !important;
+        }
+
+        /* Floating pill-shaped chat input, like a real messaging app */
+        div[data-testid="stChatInput"]{
+            border-radius:28px !important;
+            box-shadow:0 2px 14px rgba(16,24,40,0.10);
+            border:1px solid var(--border) !important;
+        }
+        div[data-testid="stChatInput"] textarea{
+            border-radius:28px !important;
+        }
+
+        /* Online status dot in the hero header */
+        .online-dot{
+            display:inline-flex; align-items:center; gap:5px;
+            font-size:0.76rem; font-weight:600; color:var(--success-600);
+        }
+        .online-dot .pulse{
+            width:8px; height:8px; border-radius:50%; background:var(--success-600);
+            box-shadow:0 0 0 rgba(31,122,77,0.5); animation:pulse 2s infinite;
+        }
+        @keyframes pulse{
+            0%{ box-shadow:0 0 0 0 rgba(31,122,77,0.45); }
+            70%{ box-shadow:0 0 0 7px rgba(31,122,77,0); }
+            100%{ box-shadow:0 0 0 0 rgba(31,122,77,0); }
+        }
+
+        /* ---- Empty-state welcome screen ---- */
+        .empty-state{
+            text-align:center; padding:34px 20px 10px 20px;
+        }
+        .empty-avatar{
+            width:64px; height:64px; margin:0 auto 14px auto;
+            display:flex; align-items:center; justify-content:center;
+            border-radius:50%; font-size:1.9rem;
+            background:linear-gradient(135deg,var(--gold-500),var(--gold-100));
+            box-shadow:0 4px 14px rgba(198,154,46,0.35);
+        }
+        .empty-title{
+            font-family:'Source Serif 4',serif; font-weight:700; font-size:1.35rem;
+            color:var(--navy-900); margin-bottom:6px;
+        }
+        .empty-sub{
+            color:var(--ink-500); font-size:0.92rem; max-width:480px; margin:0 auto;
+        }
+        .suggestions-label{
+            font-size:0.76rem; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
+            color:var(--ink-500); text-align:center; margin:22px 0 10px 0;
+        }
+
+        /* Suggestion chip buttons (scoped via st.container(key=...)) */
+        .st-key-suggestion_row .stButton>button{
+            background:#FFFFFF;
+            border:1px solid var(--border);
+            color:var(--navy-900);
+            border-radius:14px;
+            padding:12px 14px;
+            font-weight:500;
+            font-size:0.88rem;
+            text-align:left;
+            white-space:normal;
+            height:100%;
+            box-shadow:0 1px 2px rgba(16,24,40,0.04);
+            transition:all .15s ease;
+        }
+        .st-key-suggestion_row .stButton>button:hover{
+            border-color:var(--gold-500);
+            background:var(--gold-100);
+            transform:translateY(-2px);
+            box-shadow:0 4px 10px rgba(16,24,40,0.08);
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -213,6 +347,15 @@ def _citation_card(section: str, page: int, text: str, limit: int = 300) -> str:
         "</div>"
     )
 
+
+EXAMPLE_QUESTIONS = [
+    ("🎓", "What are the admission requirements?"),
+    ("💰", "What is the fee structure for B.Tech?"),
+    ("📈", "What are the latest placement statistics?"),
+]
+
+BOT_AVATAR = "🎓"
+USER_AVATAR = "🧑"
 
 _inject_css()
 
@@ -295,8 +438,23 @@ with st.sidebar:
     )
 
     st.divider()
+    st.markdown('<div class="side-label">Memory</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="memory-indicator"><span class="dot dot-active"></span> Session memory active</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(f"Summarizes every {config.MEMORY_SUMMARIZE_AFTER} turns")
+    st.caption(f"Profiles auto-expire after {config.MEMORY_AUTO_EXPIRE_DAYS} days")
+    
+    st.write("")
     if st.button("🗑️ Clear conversation"):
         st.session_state.messages = []
+        reset_session()
+        st.rerun()
+    
+    if st.button("🔒 Clear my data"):
+        # This will be handled by the chat
+        st.session_state.messages.append({"role": "user", "content": "clear my data"})
         st.rerun()
 
 # --- Main chat area ------------------------------------------------------
@@ -307,6 +465,7 @@ st.markdown(
         <div>
             <p class="hero-title">Ask about BVRIT</p>
             <p class="hero-sub">Answers are grounded strictly in the official college document, with page-level citations.</p>
+            <div class="online-dot"><span class="pulse"></span> Online now</div>
         </div>
     </div>
     """,
@@ -321,8 +480,37 @@ else:
     status_chips.insert(0, _chip("Knowledge base offline", "danger"))
 st.markdown(f'<div class="status-row">{"".join(status_chips)}</div>', unsafe_allow_html=True)
 
+# Show privacy notice on first interaction
+if st.session_state.first_interaction:
+    with st.chat_message("assistant", avatar=BOT_AVATAR):
+        st.markdown(get_privacy_notice())
+    st.session_state.first_interaction = False
+
+# Welcome screen + example question chips, shown only before the first message
+if not st.session_state.messages:
+    st.markdown(
+        """
+        <div class="empty-state">
+            <div class="empty-avatar">🎓</div>
+            <div class="empty-title">Hi, I'm the BVRIT Assistant</div>
+            <div class="empty-sub">Ask me anything about admissions, fees, placements, or campus
+            life — I'll answer using the official college document, with citations.</div>
+        </div>
+        <div class="suggestions-label">Try asking</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.container(key="suggestion_row"):
+        cols = st.columns(len(EXAMPLE_QUESTIONS))
+        for col, (icon, question) in zip(cols, EXAMPLE_QUESTIONS):
+            with col:
+                if st.button(f"{icon}  {question}", key=f"sugg_{question}", use_container_width=True):
+                    st.session_state.pending_query = question
+                    st.rerun()
+
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
+    avatar = USER_AVATAR if msg["role"] == "user" else BOT_AVATAR
+    with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
         if msg["role"] == "assistant":
             if msg.get("refused"):
@@ -338,16 +526,19 @@ for msg in st.session_state.messages:
 
 query = st.chat_input("Ask a question about BVRIT (admissions, fees, placements, ...)")
 
+if not query and st.session_state.get("pending_query"):
+    query = st.session_state.pop("pending_query")
+
 if query:
     if not config.DOCX_PATH.exists() or chunk_count == 0:
         st.error("The knowledge base isn't indexed yet. Use the sidebar to build the index first.")
     else:
         st.session_state.messages.append({"role": "user", "content": query})
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar=USER_AVATAR):
             st.markdown(query)
 
-        with st.chat_message("assistant"):
-            with st.spinner("Retrieving and generating..."):
+        with st.chat_message("assistant", avatar=BOT_AVATAR):
+            with st.spinner("Thinking..."):
                 history = [
                     {"role": m["role"], "content": m["content"]}
                     for m in st.session_state.messages[:-1]
@@ -357,6 +548,9 @@ if query:
                     chat_history=history,
                     top_k=top_k,
                     section_filter=section_filter,
+                    user_id=st.session_state.user_id,
+                    session_id=st.session_state.session_id,
+                    use_summarization=True,
                 )
             if result.refused:
                 st.markdown(_verdict_badge(True), unsafe_allow_html=True)
