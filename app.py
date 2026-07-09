@@ -8,6 +8,7 @@ import html
 import os
 import hashlib
 import time
+import datetime as dt
 
 import streamlit as st
 
@@ -17,7 +18,7 @@ from src.rag_chain import answer, get_privacy_notice
 from src.memory import reset_session
 
 st.set_page_config(
-    page_title="BVRIT FAQ Assistant",
+    page_title="BVRIT AI Assistant",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -25,57 +26,89 @@ st.set_page_config(
 
 # --- Session state ---------------------------------------------------------
 if "messages" not in st.session_state:
-    st.session_state.messages = []  # [{role, content, citations, refused, latency}]
+    st.session_state.messages = []  # [{role, content, citations, refused, latency, timestamp, feedback}]
 
 if "first_interaction" not in st.session_state:
     st.session_state.first_interaction = True
 
 if "user_id" not in st.session_state:
-    # Generate a persistent user ID based on session
     st.session_state.user_id = f"user_{hashlib.md5(str(time.time()).encode()).hexdigest()[:8]}"
 
 if "session_id" not in st.session_state:
     st.session_state.session_id = f"session_{time.strftime('%Y%m%d_%H%M%S')}"
 
+if "pending_query" not in st.session_state:
+    st.session_state.pending_query = None
+
+
+# --- Content ------------------------------------------------------------
+TOPIC_CARDS = [
+    ("🎓", "Admissions", "Eligibility, cutoffs, documents", "What are the admission requirements, eligibility criteria and cutoffs?"),
+    ("💰", "Fee Structure", "Tuition, hostel, scholarships", "What is the fee structure for B.Tech programs?"),
+    ("📈", "Placements", "Recruiters, packages, stats", "What are the latest placement statistics and top recruiters?"),
+    ("🏠", "Hostel", "Rooms, mess, facilities", "What hostel facilities are available and what do they cost?"),
+    ("🎁", "Scholarships", "Merit & need-based aid", "What scholarships are available and how do I apply for them?"),
+    ("🏫", "Campus Life", "Clubs, events, facilities", "What is campus life like — clubs, events and facilities?"),
+]
+
+BOT_AVATAR = "🤖"
+USER_AVATAR = "🙂"
+
+
+def _greeting() -> str:
+    hour = dt.datetime.now().hour
+    if hour < 12:
+        return "Good morning"
+    if hour < 17:
+        return "Good afternoon"
+    return "Good evening"
+
 
 # --- Design system ----------------------------------------------------------
-# A quiet, institutional palette (deep navy + academic gold on a cool paper
-# background) so the chatbot reads as an official record-lookup tool rather
-# than a generic chat demo. Every custom visual below is plain HTML/CSS
-# rendered through st.markdown, so it can't be knocked out of alignment by
-# Streamlit's internal class names changing between versions.
+# A dark, modern "AI product" look: deep slate background, blue/indigo
+# gradient branding, floating glass input, chat-bubble message rows.
+# Everything below is plain HTML/CSS rendered through st.markdown, so it
+# can't be knocked out of alignment by Streamlit's internal class names
+# changing between versions.
 def _inject_css() -> None:
     st.markdown(
         """
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
         :root{
-            --navy-900:#0B1F3A;
-            --navy-700:#15335C;
-            --navy-500:#2C4E82;
-            --gold-500:#C69A2E;
-            --gold-100:#F5E9C9;
-            --paper-50:#F5F7FA;
-            --ink-900:#182233;
-            --ink-500:#5B6B82;
-            --border:#DCE3EC;
-            --success-600:#1F7A4D;
-            --success-50:#E7F5EC;
-            --warn-600:#A9660A;
-            --warn-50:#FBF0DE;
-            --danger-600:#B3261E;
-            --danger-50:#FCE8E6;
+            --bg:#0F172A;
+            --bg-sidebar:#111827;
+            --surface:#1E293B;
+            --surface-2:#243144;
+            --user-bubble:#2563EB;
+            --text:#F8FAFC;
+            --text-muted:#94A3B8;
+            --border:rgba(255,255,255,0.08);
+            --accent:#3B82F6;
+            --accent-2:#4F46E5;
+            --gradient:linear-gradient(135deg,#2563EB 0%,#4F46E5 100%);
+            --success:#22C55E;
+            --success-bg:rgba(34,197,94,0.12);
+            --warn:#F59E0B;
+            --warn-bg:rgba(245,158,11,0.12);
+            --danger:#EF4444;
+            --danger-bg:rgba(239,68,68,0.12);
         }
 
-        .stApp{ background:var(--paper-50); }
-        html, body, [class*="css"]{ font-family:'Inter',sans-serif; color:var(--ink-900); }
-        h1,h2,h3{ font-family:'Source Serif 4',serif; }
+        .stApp{ background:var(--bg); }
+        html, body, [class*="css"]{ font-family:'Inter',sans-serif; color:var(--text); }
+        h1,h2,h3{ font-family:'Plus Jakarta Sans',sans-serif; }
+
+        /* Center + cap width for a comfortable reading column on wide monitors */
+        .main .block-container{
+            max-width:900px; margin:0 auto; padding-top:1.6rem; padding-bottom:6rem;
+        }
 
         /* ---- Sidebar ---- */
         section[data-testid="stSidebar"]{
-            background:linear-gradient(180deg,var(--navy-900) 0%,var(--navy-700) 100%);
-            border-right:1px solid var(--navy-900);
+            background:var(--bg-sidebar);
+            border-right:1px solid var(--border);
         }
         section[data-testid="stSidebar"] h1,
         section[data-testid="stSidebar"] h2,
@@ -85,36 +118,41 @@ def _inject_css() -> None:
         section[data-testid="stSidebar"] label,
         section[data-testid="stSidebar"] .stMarkdown,
         section[data-testid="stSidebar"] .stCaption{
-            color:#E7ECF5 !important;
+            color:var(--text) !important;
         }
-        section[data-testid="stSidebar"] hr{ border-color:rgba(255,255,255,0.14); }
+        section[data-testid="stSidebar"] hr{ border-color:var(--border); }
         section[data-testid="stSidebar"] .stButton>button{
-            background:var(--gold-500);
-            color:var(--navy-900);
+            background:var(--gradient);
+            color:#fff;
             border:none;
-            border-radius:8px;
+            border-radius:10px;
             font-weight:600;
             width:100%;
+            transition:transform .15s ease, box-shadow .15s ease;
         }
         section[data-testid="stSidebar"] .stButton>button:hover{
-            background:#D9AE44;
-            color:var(--navy-900);
+            transform:translateY(-1px);
+            box-shadow:0 6px 16px rgba(37,99,235,0.35);
         }
 
         /* ---- Sidebar brand block ---- */
-        .brand-block{ padding:4px 0 18px 0; border-bottom:1px solid rgba(255,255,255,0.14); margin-bottom:16px; }
+        .brand-block{ padding:4px 0 18px 0; border-bottom:1px solid var(--border); margin-bottom:16px; }
         .brand-crest{
             display:inline-flex; align-items:center; justify-content:center;
-            width:40px; height:40px; border-radius:10px;
-            background:var(--gold-500); color:var(--navy-900);
-            font-size:20px; margin-bottom:10px;
+            width:40px; height:40px; border-radius:11px;
+            background:var(--gradient); color:#fff;
+            font-weight:800; font-size:1.1rem; margin-bottom:10px;
         }
-        .brand-name{ font-family:'Source Serif 4',serif; font-size:1.15rem; font-weight:700; color:#FFFFFF; line-height:1.25; }
-        .brand-tagline{ font-size:0.78rem; color:#AFC0D9; letter-spacing:.02em; text-transform:uppercase; }
+        .brand-name{ font-family:'Plus Jakarta Sans',sans-serif; font-size:1.1rem; font-weight:700; color:#FFFFFF; line-height:1.25; }
+        .brand-tagline{ font-size:0.76rem; color:var(--text-muted); letter-spacing:.02em; text-transform:uppercase; }
 
         .side-label{
             font-size:0.72rem; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
-            color:#9FB3CF !important; margin:2px 0 8px 0;
+            color:var(--text-muted) !important; margin:2px 0 8px 0;
+        }
+        .side-recent-item{
+            font-size:0.82rem; color:var(--text-muted); padding:6px 0; border-bottom:1px solid var(--border);
+            overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
         }
 
         /* ---- Chips / badges ---- */
@@ -124,188 +162,205 @@ def _inject_css() -> None:
             border:1px solid transparent; white-space:nowrap;
         }
         .chip-dot{ width:7px; height:7px; border-radius:50%; display:inline-block; }
-        .chip-success{ background:var(--success-50); color:var(--success-600); border-color:#CDE9D8; }
-        .chip-success .chip-dot{ background:var(--success-600); }
-        .chip-warn{ background:var(--warn-50); color:var(--warn-600); border-color:#F1DFB6; }
-        .chip-warn .chip-dot{ background:var(--warn-600); }
-        .chip-danger{ background:var(--danger-50); color:var(--danger-600); border-color:#F3C9C5; }
-        .chip-danger .chip-dot{ background:var(--danger-600); }
-        .chip-neutral{ background:rgba(255,255,255,0.10); color:#E7ECF5; border-color:rgba(255,255,255,0.18); }
+        .chip-success{ background:var(--success-bg); color:var(--success); border-color:rgba(34,197,94,0.25); }
+        .chip-success .chip-dot{ background:var(--success); }
+        .chip-warn{ background:var(--warn-bg); color:var(--warn); border-color:rgba(245,158,11,0.25); }
+        .chip-warn .chip-dot{ background:var(--warn); }
+        .chip-danger{ background:var(--danger-bg); color:var(--danger); border-color:rgba(239,68,68,0.25); }
+        .chip-danger .chip-dot{ background:var(--danger); }
+        .chip-neutral{ background:var(--surface); color:var(--text-muted); border-color:var(--border); }
         .chip-mono{ font-family:'IBM Plex Mono',monospace; font-weight:500; font-size:0.74rem; }
 
-        /* ---- Hero header ---- */
-        .hero{
-            display:flex; align-items:center; gap:16px;
-            background:#FFFFFF; border:1px solid var(--border); border-left:5px solid var(--gold-500);
-            border-radius:12px; padding:18px 22px; margin-bottom:14px;
-            box-shadow:0 1px 2px rgba(16,24,40,0.04);
+        /* ---- Simple gradient header (no bordered hero card) ---- */
+        .topbar{ display:flex; align-items:center; gap:14px; margin-bottom:6px; }
+        .topbar-mark{
+            width:44px; height:44px; border-radius:12px; flex-shrink:0;
+            background:var(--gradient); display:flex; align-items:center; justify-content:center;
+            font-weight:800; color:#fff; font-size:1.15rem;
+            box-shadow:0 6px 18px rgba(37,99,235,0.35);
         }
-        .hero-icon{ font-size:2rem; line-height:1; }
-        .hero-title{ font-family:'Source Serif 4',serif; font-weight:700; font-size:1.5rem; color:var(--navy-900); margin:0; }
-        .hero-sub{ color:var(--ink-500); font-size:0.92rem; margin-top:2px; }
+        .topbar-title{ font-family:'Plus Jakarta Sans',sans-serif; font-weight:800; font-size:1.35rem; color:#fff; margin:0; }
+        .topbar-sub{ color:var(--text-muted); font-size:0.86rem; margin-top:1px; }
+        .topbar-meta{ font-size:0.76rem; color:var(--text-muted); margin-top:2px; }
+        .topbar-meta b{ color:#CBD5E1; font-weight:600; }
 
-        .status-row{ display:flex; flex-wrap:wrap; gap:8px; margin:0 0 20px 2px; }
-        .status-row .chip{ background:#FFFFFF; border:1px solid var(--border); color:var(--ink-900); }
-        .status-row .chip-mono{ background:var(--navy-900); color:#F5E9C9; border-color:var(--navy-900); }
-
-        /* ---- Chat bubbles (light-touch styling of stable Streamlit hooks) ---- */
-        div[data-testid="stChatMessage"]{
-            background:#FFFFFF;
-            border:1px solid var(--border);
-            border-radius:12px;
-            padding:4px 6px;
-            box-shadow:0 1px 2px rgba(16,24,40,0.03);
+        .online-dot{
+            display:inline-flex; align-items:center; gap:5px;
+            font-size:0.76rem; font-weight:600; color:var(--success);
         }
-
-        /* ---- Refusal / grounded badges above an answer ---- */
-        .verdict-badge{
-            display:inline-flex; align-items:center; gap:6px;
-            padding:3px 11px; border-radius:999px; font-size:0.74rem; font-weight:700;
-            letter-spacing:.02em; text-transform:uppercase; margin-bottom:8px;
+        .online-dot .pulse{
+            width:8px; height:8px; border-radius:50%; background:var(--success);
+            animation:pulse 2s infinite;
         }
-        .verdict-refused{ background:var(--warn-50); color:var(--warn-600); border:1px solid #F1DFB6; }
-        .verdict-grounded{ background:var(--success-50); color:var(--success-600); border:1px solid #CDE9D8; }
-
-        /* ---- Citation ledger cards ---- */
-        .citation-card{
-            border:1px solid var(--border); border-left:3px solid var(--navy-500);
-            border-radius:8px; padding:10px 12px; margin-bottom:8px; background:#FAFBFD;
-        }
-        .citation-tag{
-            display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:0.72rem;
-            font-weight:600; color:var(--navy-900); background:var(--gold-100);
-            border-radius:5px; padding:2px 7px; margin-bottom:6px;
-        }
-        .citation-text{ font-size:0.86rem; color:var(--ink-900); font-style:italic; line-height:1.45; }
-
-        .latency-tag{
-            font-family:'IBM Plex Mono',monospace; font-size:0.76rem; color:var(--ink-500);
+        @keyframes pulse{
+            0%{ box-shadow:0 0 0 0 rgba(34,197,94,0.5); }
+            70%{ box-shadow:0 0 0 7px rgba(34,197,94,0); }
+            100%{ box-shadow:0 0 0 0 rgba(34,197,94,0); }
         }
 
-        .footer-note{
-            margin-top:28px; padding-top:14px; border-top:1px solid var(--border);
-            color:var(--ink-500); font-size:0.8rem; text-align:center;
-        }
-        
-        /* Memory status indicator */
-        .memory-indicator {
-            display:inline-flex; align-items:center; gap:6px;
-            padding:4px 12px; border-radius:999px; font-size:0.72rem;
-            background:rgba(255,255,255,0.08); color:#AFC0D9;
-            border:1px solid rgba(255,255,255,0.10);
-        }
-        .memory-indicator .dot {
-            width:6px; height:6px; border-radius:50%; display:inline-block;
-        }
-        .dot-active { background:#4CAF50; }
-        .dot-inactive { background:#9e9e9e; }
+        .status-row{ display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 20px 0; }
 
-        /* ---- Real chatbot look: bubbles, avatars, floating input ---- */
-
-        /* Base bubble */
+        /* ---- Chat bubbles ---- */
         div[data-testid="stChatMessage"]{
             border:none;
-            border-radius:18px;
-            padding:12px 16px;
-            margin-bottom:12px;
-            max-width:82%;
-            box-shadow:0 1px 3px rgba(16,24,40,0.06);
+            border-radius:24px;
+            padding:18px;
+            margin-bottom:6px;
+            max-width:70%;
+            box-shadow:0 2px 8px rgba(0,0,0,0.18);
             animation: bubble-in .18s ease-out;
+            transition:transform .15s ease;
         }
         @keyframes bubble-in{
             from{ opacity:0; transform:translateY(4px); }
             to{ opacity:1; transform:translateY(0); }
         }
 
-        /* Assistant bubble: left-aligned, paper card */
         div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]){
-            background:#FFFFFF;
+            background:var(--surface);
             border:1px solid var(--border);
             margin-right:auto;
-            border-bottom-left-radius:4px;
+            border-bottom-left-radius:6px;
         }
 
-        /* User bubble: right-aligned, filled navy, reversed avatar order */
         div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]){
-            background:linear-gradient(135deg,var(--navy-700) 0%,var(--navy-900) 100%);
+            background:linear-gradient(135deg,var(--user-bubble) 0%,var(--accent-2) 100%);
             margin-left:auto;
             flex-direction:row-reverse;
-            border-bottom-right-radius:4px;
+            border-bottom-right-radius:6px;
         }
-        div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) p,
-        div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) span,
-        div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdown{
-            color:#FFFFFF !important;
+        div[data-testid="stChatMessage"] p,
+        div[data-testid="stChatMessage"] li,
+        div[data-testid="stChatMessage"] span,
+        div[data-testid="stChatMessage"] .stMarkdown{
+            color:var(--text) !important;
+        }
+        div[data-testid="stChatMessage"] code{
+            background:rgba(255,255,255,0.08); color:#E2E8F0;
         }
 
-        /* Floating pill-shaped chat input, like a real messaging app */
+        .msg-timestamp{
+            font-size:0.7rem; color:var(--text-muted); margin:2px 4px 14px 4px;
+        }
+        .msg-timestamp.right{ text-align:right; }
+        .msg-timestamp.left{ text-align:left; }
+
+        /* ---- Quick actions row under assistant messages ---- */
+        [class*="st-key-qa_row_"] .stButton>button{
+            background:transparent; border:1px solid var(--border); color:var(--text-muted);
+            border-radius:8px; padding:2px 10px; font-size:0.82rem; min-height:0; height:30px;
+            transition:all .15s ease;
+        }
+        .qa-row .stButton>button:hover{ border-color:var(--accent); color:#fff; background:rgba(59,130,246,0.12); }
+
+        /* ---- Typing / loading theatre ---- */
+        .loading-stage{
+            display:flex; align-items:center; gap:10px; color:var(--text-muted); font-size:0.9rem; padding:4px 0;
+        }
+        .typing-dots{ display:inline-flex; gap:4px; }
+        .typing-dots span{
+            width:6px; height:6px; border-radius:50%; background:var(--accent);
+            animation:typing-bounce 1.1s infinite ease-in-out;
+        }
+        .typing-dots span:nth-child(2){ animation-delay:.15s; }
+        .typing-dots span:nth-child(3){ animation-delay:.3s; }
+        @keyframes typing-bounce{
+            0%, 60%, 100%{ transform:translateY(0); opacity:.5; }
+            30%{ transform:translateY(-4px); opacity:1; }
+        }
+
+        /* ---- Verdict badges ---- */
+        .verdict-badge{
+            display:inline-flex; align-items:center; gap:6px;
+            padding:3px 11px; border-radius:999px; font-size:0.74rem; font-weight:700;
+            letter-spacing:.02em; text-transform:uppercase; margin-bottom:8px;
+        }
+        .verdict-refused{ background:var(--warn-bg); color:var(--warn); border:1px solid rgba(245,158,11,0.25); }
+        .verdict-grounded{ background:var(--success-bg); color:var(--success); border:1px solid rgba(34,197,94,0.25); }
+
+        /* ---- Citation cards ---- */
+        .citation-card{
+            border:1px solid var(--border); border-left:3px solid var(--accent);
+            border-radius:10px; padding:10px 12px; margin-bottom:8px; background:var(--surface-2);
+        }
+        .citation-tag{
+            display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:0.72rem;
+            font-weight:600; color:#0F172A; background:#93C5FD;
+            border-radius:5px; padding:2px 7px; margin-bottom:6px;
+        }
+        .citation-text{ font-size:0.86rem; color:#E2E8F0; font-style:italic; line-height:1.45; }
+
+        .latency-tag{
+            font-family:'IBM Plex Mono',monospace; font-size:0.76rem; color:var(--text-muted);
+        }
+
+        .footer-note{
+            margin-top:28px; padding-top:14px; border-top:1px solid var(--border);
+            color:var(--text-muted); font-size:0.8rem; text-align:center;
+        }
+
+        /* Memory status indicator */
+        .memory-indicator {
+            display:inline-flex; align-items:center; gap:6px;
+            padding:4px 12px; border-radius:999px; font-size:0.72rem;
+            background:rgba(255,255,255,0.06); color:var(--text-muted);
+            border:1px solid var(--border);
+        }
+        .memory-indicator .dot {
+            width:6px; height:6px; border-radius:50%; display:inline-block;
+        }
+        .dot-active { background:var(--success); }
+        .dot-inactive { background:#9e9e9e; }
+
+        /* ---- Floating glass chat input ---- */
         div[data-testid="stChatInput"]{
             border-radius:28px !important;
-            box-shadow:0 2px 14px rgba(16,24,40,0.10);
+            background:rgba(30,41,59,0.85) !important;
+            backdrop-filter:blur(12px);
+            -webkit-backdrop-filter:blur(12px);
+            box-shadow:0 15px 40px rgba(0,0,0,0.35);
             border:1px solid var(--border) !important;
         }
         div[data-testid="stChatInput"] textarea{
             border-radius:28px !important;
-        }
-
-        /* Online status dot in the hero header */
-        .online-dot{
-            display:inline-flex; align-items:center; gap:5px;
-            font-size:0.76rem; font-weight:600; color:var(--success-600);
-        }
-        .online-dot .pulse{
-            width:8px; height:8px; border-radius:50%; background:var(--success-600);
-            box-shadow:0 0 0 rgba(31,122,77,0.5); animation:pulse 2s infinite;
-        }
-        @keyframes pulse{
-            0%{ box-shadow:0 0 0 0 rgba(31,122,77,0.45); }
-            70%{ box-shadow:0 0 0 7px rgba(31,122,77,0); }
-            100%{ box-shadow:0 0 0 0 rgba(31,122,77,0); }
+            color:var(--text) !important;
         }
 
         /* ---- Empty-state welcome screen ---- */
-        .empty-state{
-            text-align:center; padding:34px 20px 10px 20px;
-        }
-        .empty-avatar{
-            width:64px; height:64px; margin:0 auto 14px auto;
-            display:flex; align-items:center; justify-content:center;
-            border-radius:50%; font-size:1.9rem;
-            background:linear-gradient(135deg,var(--gold-500),var(--gold-100));
-            box-shadow:0 4px 14px rgba(198,154,46,0.35);
-        }
+        .empty-state{ text-align:center; padding:38px 20px 6px 20px; }
         .empty-title{
-            font-family:'Source Serif 4',serif; font-weight:700; font-size:1.35rem;
-            color:var(--navy-900); margin-bottom:6px;
+            font-family:'Plus Jakarta Sans',sans-serif; font-weight:800; font-size:1.7rem;
+            background:var(--gradient); -webkit-background-clip:text; background-clip:text; color:transparent;
+            margin-bottom:6px;
         }
-        .empty-sub{
-            color:var(--ink-500); font-size:0.92rem; max-width:480px; margin:0 auto;
-        }
+        .empty-sub{ color:var(--text-muted); font-size:0.96rem; }
+
         .suggestions-label{
             font-size:0.76rem; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
-            color:var(--ink-500); text-align:center; margin:22px 0 10px 0;
+            color:var(--text-muted); text-align:center; margin:24px 0 10px 0;
         }
 
-        /* Suggestion chip buttons (scoped via st.container(key=...)) */
-        .st-key-suggestion_row .stButton>button{
-            background:#FFFFFF;
+        /* Topic cards (scoped via st.container(key=...)) */
+        .st-key-topic_grid .stButton>button{
+            background:var(--surface);
             border:1px solid var(--border);
-            color:var(--navy-900);
-            border-radius:14px;
-            padding:12px 14px;
-            font-weight:500;
-            font-size:0.88rem;
+            color:var(--text);
+            border-radius:16px;
+            padding:16px 16px;
+            font-weight:600;
+            font-size:0.92rem;
             text-align:left;
-            white-space:normal;
+            white-space:pre-line;
             height:100%;
-            box-shadow:0 1px 2px rgba(16,24,40,0.04);
-            transition:all .15s ease;
+            min-height:88px;
+            box-shadow:0 1px 3px rgba(0,0,0,0.16);
+            transition:all .2s ease;
         }
-        .st-key-suggestion_row .stButton>button:hover{
-            border-color:var(--gold-500);
-            background:var(--gold-100);
-            transform:translateY(-2px);
-            box-shadow:0 4px 10px rgba(16,24,40,0.08);
+        .st-key-topic_grid .stButton>button:hover{
+            border-color:var(--accent);
+            background:var(--surface-2);
+            transform:translateY(-3px);
+            box-shadow:0 10px 24px rgba(37,99,235,0.22);
         }
         </style>
         """,
@@ -342,20 +397,68 @@ def _citation_card(section: str, page: int, text: str, limit: int = 300) -> str:
     snippet = text[:limit] + ("…" if len(text) > limit else "")
     return (
         '<div class="citation-card">'
-        f'<div class="citation-tag">{html.escape(section)} · P.{page}</div>'
+        f'<div class="citation-tag">📄 {html.escape(section)} · Page {page}</div>'
         f'<div class="citation-text">“{html.escape(snippet)}”</div>'
         "</div>"
     )
 
 
-EXAMPLE_QUESTIONS = [
-    ("🎓", "What are the admission requirements?"),
-    ("💰", "What is the fee structure for B.Tech?"),
-    ("📈", "What are the latest placement statistics?"),
-]
+def _timestamp() -> str:
+    return time.strftime("%I:%M %p").lstrip("0")
 
-BOT_AVATAR = "🎓"
-USER_AVATAR = "🧑"
+
+def _render_timestamp(ts: str, role: str) -> None:
+    side = "right" if role == "user" else "left"
+    st.markdown(f'<div class="msg-timestamp {side}">{html.escape(ts)}</div>', unsafe_allow_html=True)
+
+
+def _run_answer(query: str, top_k: int, section_filter: str):
+    """Runs the RAG pipeline with a short staged-progress display, then
+    reveals the answer with a simulated word-by-word stream."""
+    stage_ph = st.empty()
+    stages = [
+        "🔍 Searching knowledge base",
+        "📚 Retrieving relevant documents",
+        "🧠 Generating answer",
+    ]
+    for s in stages:
+        stage_ph.markdown(
+            f'<div class="loading-stage">{s}'
+            f'<span class="typing-dots"><span></span><span></span><span></span></span></div>',
+            unsafe_allow_html=True,
+        )
+        time.sleep(0.35)
+
+    history = [
+        {"role": m["role"], "content": m["content"]}
+        for m in st.session_state.messages[:-1]
+    ]
+    result = answer(
+        query,
+        chat_history=history,
+        top_k=top_k,
+        section_filter=section_filter,
+        user_id=st.session_state.user_id,
+        session_id=st.session_state.session_id,
+        use_summarization=True,
+    )
+    stage_ph.empty()
+
+    # Simulated streaming reveal (backend returns the full answer at once;
+    # this just paces how it appears so it *feels* like live generation).
+    answer_ph = st.empty()
+    words = result.answer.split(" ")
+    per_word_delay = min(0.03, 1.4 / max(len(words), 1))
+    partial = ""
+    for i, w in enumerate(words):
+        partial += w + " "
+        if i % 3 == 0 or i == len(words) - 1:
+            answer_ph.markdown(partial + "▌")
+            time.sleep(per_word_delay * 3)
+    answer_ph.markdown(result.answer)
+
+    return result
+
 
 _inject_css()
 
@@ -364,9 +467,9 @@ with st.sidebar:
     st.markdown(
         """
         <div class="brand-block">
-            <div class="brand-crest">🎓</div>
-            <div class="brand-name">BVRIT FAQ Assistant</div>
-            <div class="brand-tagline">Retrieval-grounded · Official record</div>
+            <div class="brand-crest">B</div>
+            <div class="brand-name">BVRIT AI</div>
+            <div class="brand-tagline">Campus Assistant</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -383,7 +486,7 @@ with st.sidebar:
             st.error(f"Index error: {e}")
 
         st.markdown(
-            f'<div class="chip-mono" style="color:#E7ECF5;font-size:0.8rem;margin-bottom:8px;">'
+            f'<div class="chip-mono" style="color:#E2E8F0;font-size:0.8rem;margin-bottom:8px;">'
             f'📄 {html.escape(config.DOCX_PATH.name)}</div>',
             unsafe_allow_html=True,
         )
@@ -428,51 +531,62 @@ with st.sidebar:
     st.markdown('<div class="side-label">Models · via OpenRouter</div>', unsafe_allow_html=True)
     st.markdown(
         f'<div style="margin-bottom:6px;">{_chip("Generation", "neutral")} '
-        f'<span class="chip-mono" style="color:#E7ECF5;">{html.escape(config.GENERATION_MODEL)}</span></div>',
+        f'<span class="chip-mono" style="color:#E2E8F0;">{html.escape(config.GENERATION_MODEL)}</span></div>',
         unsafe_allow_html=True,
     )
     st.markdown(
         f'<div>{_chip("Embeddings", "neutral")} '
-        f'<span class="chip-mono" style="color:#E7ECF5;">{html.escape(config.EMBEDDING_MODEL)}</span></div>',
+        f'<span class="chip-mono" style="color:#E2E8F0;">{html.escape(config.EMBEDDING_MODEL)}</span></div>',
         unsafe_allow_html=True,
     )
 
     st.divider()
     st.markdown('<div class="side-label">Memory</div>', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="memory-indicator"><span class="dot dot-active"></span> Session memory active</div>',
+        '<div class="memory-indicator"><span class="dot dot-active"></span> Session memory active</div>',
         unsafe_allow_html=True,
     )
     st.caption(f"Summarizes every {config.MEMORY_SUMMARIZE_AFTER} turns")
     st.caption(f"Profiles auto-expire after {config.MEMORY_AUTO_EXPIRE_DAYS} days")
-    
+
+    # Lightweight "recent questions" recap for this session. Full
+    # multi-day chat history (Today / Yesterday, switchable threads)
+    # would need a persistence layer this app doesn't have yet.
+    user_turns = [m for m in st.session_state.messages if m["role"] == "user"]
+    if user_turns:
+        st.divider()
+        st.markdown('<div class="side-label">This session</div>', unsafe_allow_html=True)
+        for m in user_turns[-6:][::-1]:
+            preview = (m["content"][:38] + "…") if len(m["content"]) > 38 else m["content"]
+            st.markdown(f'<div class="side-recent-item">💬 {html.escape(preview)}</div>', unsafe_allow_html=True)
+
     st.write("")
     if st.button("🗑️ Clear conversation"):
         st.session_state.messages = []
         reset_session()
         st.rerun()
-    
+
     if st.button("🔒 Clear my data"):
-        # This will be handled by the chat
-        st.session_state.messages.append({"role": "user", "content": "clear my data"})
+        st.session_state.messages.append({"role": "user", "content": "clear my data", "timestamp": _timestamp()})
         st.rerun()
 
 # --- Main chat area ------------------------------------------------------
 st.markdown(
     """
-    <div class="hero">
-        <div class="hero-icon">🎓</div>
+    <div class="topbar">
+        <div class="topbar-mark">B</div>
         <div>
-            <p class="hero-title">Ask about BVRIT</p>
-            <p class="hero-sub">Answers are grounded strictly in the official college document, with page-level citations.</p>
-            <div class="online-dot"><span class="pulse"></span> Online now</div>
+            <p class="topbar-title">BVRIT AI Assistant</p>
+            <p class="topbar-sub">Your intelligent campus assistant</p>
+            <p class="topbar-meta"><b>Powered by RAG</b> &nbsp;•&nbsp; <b>Sources Verified</b> &nbsp;•&nbsp;
+            <span class="online-dot"><span class="pulse"></span>Online now</span></p>
         </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-status_chips = [_chip(f"{top_k} chunks retrieved / query", "neutral")]
+status_chips = [_chip(f"{top_k} chunks / query", "neutral")]
 status_chips.append(_chip(section_filter, "neutral"))
 if doc_exists and chunk_count:
     status_chips.insert(0, _chip("Knowledge base online", "success"))
@@ -486,29 +600,28 @@ if st.session_state.first_interaction:
         st.markdown(get_privacy_notice())
     st.session_state.first_interaction = False
 
-# Welcome screen + example question chips, shown only before the first message
+# Welcome screen + topic cards, shown only before the first message
 if not st.session_state.messages:
     st.markdown(
-        """
+        f"""
         <div class="empty-state">
-            <div class="empty-avatar">🎓</div>
-            <div class="empty-title">Hi, I'm the BVRIT Assistant</div>
-            <div class="empty-sub">Ask me anything about admissions, fees, placements, or campus
-            life — I'll answer using the official college document, with citations.</div>
+            <div class="empty-title">{_greeting()} 👋</div>
+            <div class="empty-sub">How can I help today?</div>
         </div>
-        <div class="suggestions-label">Try asking</div>
+        <div class="suggestions-label">Popular topics</div>
         """,
         unsafe_allow_html=True,
     )
-    with st.container(key="suggestion_row"):
-        cols = st.columns(len(EXAMPLE_QUESTIONS))
-        for col, (icon, question) in zip(cols, EXAMPLE_QUESTIONS):
+    with st.container(key="topic_grid"):
+        row1 = st.columns(3)
+        row2 = st.columns(3)
+        for col, (icon, title, subtitle, question) in zip(row1 + row2, TOPIC_CARDS):
             with col:
-                if st.button(f"{icon}  {question}", key=f"sugg_{question}", use_container_width=True):
+                if st.button(f"{icon}  {title}\n{subtitle}", key=f"topic_{title}", use_container_width=True):
                     st.session_state.pending_query = question
                     st.rerun()
 
-for msg in st.session_state.messages:
+for idx, msg in enumerate(st.session_state.messages):
     avatar = USER_AVATAR if msg["role"] == "user" else BOT_AVATAR
     with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
@@ -523,38 +636,57 @@ for msg in st.session_state.messages:
                 _render_images(msg["images"])
             if msg.get("latency") is not None:
                 st.markdown(f'<span class="latency-tag">⏱ {msg["latency"]:.2f}s</span>', unsafe_allow_html=True)
+    if msg.get("timestamp"):
+        _render_timestamp(msg["timestamp"], msg["role"])
 
-query = st.chat_input("Ask a question about BVRIT (admissions, fees, placements, ...)")
+    # Quick actions under assistant replies: like / dislike / regenerate
+    if msg["role"] == "assistant" and idx > 0:
+        with st.container(key=f"qa_row_{idx}"):
+            c1, c2, c3, _ = st.columns([1, 1, 1.4, 6])
+            feedback = msg.get("feedback")
+            with c1:
+                if st.button("👍" if feedback != "up" else "✅👍", key=f"up_{idx}"):
+                    msg["feedback"] = None if feedback == "up" else "up"
+                    st.rerun()
+            with c2:
+                if st.button("👎" if feedback != "down" else "✅👎", key=f"down_{idx}"):
+                    msg["feedback"] = None if feedback == "down" else "down"
+                    st.rerun()
+            with c3:
+                if st.button("🔄 Regenerate", key=f"regen_{idx}"):
+                    prev_user = st.session_state.messages[idx - 1]
+                    if prev_user["role"] == "user":
+                        with st.spinner(""):
+                            result = _run_answer(prev_user["content"], top_k, section_filter)
+                        msg["content"] = result.answer
+                        msg["citations"] = [
+                            {"section": c.section, "page": c.page, "text": c.text} for c in result.chunks
+                        ]
+                        msg["refused"] = result.refused
+                        msg["latency"] = result.latency_seconds
+                        msg["images"] = result.images
+                        msg["timestamp"] = _timestamp()
+                        st.rerun()
+
+query = st.chat_input("Ask anything about BVRIT...")
 
 if not query and st.session_state.get("pending_query"):
-    query = st.session_state.pop("pending_query")
+    query = st.session_state.pending_query
+    st.session_state.pending_query = None
 
 if query:
     if not config.DOCX_PATH.exists() or chunk_count == 0:
         st.error("The knowledge base isn't indexed yet. Use the sidebar to build the index first.")
     else:
-        st.session_state.messages.append({"role": "user", "content": query})
+        st.session_state.messages.append({"role": "user", "content": query, "timestamp": _timestamp()})
         with st.chat_message("user", avatar=USER_AVATAR):
             st.markdown(query)
+        _render_timestamp(st.session_state.messages[-1]["timestamp"], "user")
 
         with st.chat_message("assistant", avatar=BOT_AVATAR):
-            with st.spinner("Thinking..."):
-                history = [
-                    {"role": m["role"], "content": m["content"]}
-                    for m in st.session_state.messages[:-1]
-                ]
-                result = answer(
-                    query,
-                    chat_history=history,
-                    top_k=top_k,
-                    section_filter=section_filter,
-                    user_id=st.session_state.user_id,
-                    session_id=st.session_state.session_id,
-                    use_summarization=True,
-                )
+            result = _run_answer(query, top_k, section_filter)
             if result.refused:
                 st.markdown(_verdict_badge(True), unsafe_allow_html=True)
-            st.markdown(result.answer)
             citations = [
                 {"section": c.section, "page": c.page, "text": c.text} for c in result.chunks
             ]
@@ -574,8 +706,11 @@ if query:
                 "refused": result.refused,
                 "latency": result.latency_seconds,
                 "images": result.images,
+                "timestamp": _timestamp(),
+                "feedback": None,
             }
         )
+        st.rerun()
 
 st.markdown(
     f'<div class="footer-note">Answers are generated by AI and grounded in the referenced college '
