@@ -32,21 +32,47 @@ python run_evaluation.py
 ## Project layout
 
 ```
-app.py                          Streamlit chat UI (Phase 4)
-pages/1_Evaluation_Dashboard.py Evaluation report dashboard
-run_evaluation.py               Orchestrates the full Phase 5 pipeline
+app.py                          Streamlit chat UI
+
+run_evaluation.py               Orchestrates the complete evaluation pipeline
+
+enhance_docx.py                 Enhances/cleans the source DOCX
+diagnose_images.py              Utility for debugging extracted images
+scraper.py                      Website scraping utility
+
 src/
-  config.py                     All settings (.env-driven)
-  llm_client.py                 OpenRouter chat + embeddings wrapper
-  embeddings.py                 Chroma embedding function (OpenRouter-backed)
-  ingest.py                     Phase 1 — load, chunk, embed, index
-  rag_chain.py                  Phase 2/3 — retrieval + grounded generation
-  test_generator.py             Phase 5 Step A — LLM-generated test cases
-  test_runner.py                Phase 5 Step B — run cases against chatbot
-  judge.py                      Phase 5 Step C — LLM-as-judge scoring
-  ragas_eval.py                 Phase 5 Dim 08 — RAGAS metrics
-  report.py                     Phase 5 Step D — evaluation report
-data/                           Put college_website.docx here (git-ignored content)
-chroma_db/                      Persistent vector store (git-ignored)
-eval_results/                   Generated test cases + reports (git-ignored)
+├── config.py                   Application configuration (.env-driven)
+├── llm_client.py               OpenRouter LLM & embedding client
+├── embeddings.py               Embedding generation and vector store interface
+├── ingest.py                   Document ingestion and Chroma indexing
+├── rag_chain.py                RAG retrieval and response generation
+├── memory.py                   Conversation memory & user profile management
+├── profile_schema.py           User profile schema/models
+├── tools.py                    Custom tools used by the chatbot
+├── test_generator.py           Generate evaluation test cases
+├── test_runner.py              Execute generated test cases
+├── judge.py                    LLM-as-a-Judge evaluation
+├── ragas_eval.py               RAGAS evaluation metrics
+├── report.py                   Generate evaluation reports
+└── __init__.py
+
+data/
+├── college_website.docx        Source knowledge document (tracked)
+└── images/                     Extracted images (git-ignored)
+
+chroma_db/                      Chroma vector database (git-ignored)
+
+eval_results/                   Generated evaluation reports (git-ignored)
+
+requirements.txt                Project dependencies
+README.md                       Project documentation
+spec.md                         Project specification
+task_progress.md                Development progress log
+
+test_memory.py                  Memory module tests
+test_retrieval.py               Retrieval tests
+test_retrieval2.py              Additional retrieval tests
+
+.env                            Environment variables (git-ignored)
+.gitignore                      Git ignore rules
 ```
